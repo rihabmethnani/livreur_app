@@ -16,10 +16,11 @@ import {
 import { Ionicons } from "@expo/vector-icons"
 import { gql, useMutation, useApolloClient } from "@apollo/client"
 import { useLocalSearchParams, useRouter } from "expo-router"
-import CustomHeader from "../../../components/CustomHeader"
 import { useAuth } from "../../context/AuthContext"
+import CustomHeader from "../../../components/CustomHeader"
 
-// Queries
+
+// Queries (identiques à la version précédente)
 const GET_COURSE_DETAILS = gql`
   query CoursesByDriverId($driverId: String!) {
     coursesByDriverId(driverId: $driverId) {
@@ -41,6 +42,7 @@ const GET_ORDER = gql`
       fraisLivraison
       clientId
       driverId
+      partnerId
       createdAt
     }
   }
@@ -53,6 +55,16 @@ const GET_CLIENT_ADDRESS = gql`
       address
       name
       phone
+    }
+  }
+`
+
+const GET_INCIDENTS_BY_ORDER = gql`
+  query GetIncidentsByOrderId($orderId: String!) {
+    getIncidentsByOrderId(orderId: $orderId) {
+      _id
+      status
+      orderId
     }
   }
 `
@@ -72,8 +84,11 @@ const CREATE_INCIDENT = gql`
     createIncident(input: $input) {
       _id
       orderId
+      partnerId
+      reportedBy
       incidentType
       description
+      customDescription
       priority
       status
       createdAt
@@ -81,7 +96,7 @@ const CREATE_INCIDENT = gql`
   }
 `
 
-// Énumérations corrigées selon le backend
+// Énumérations (identiques à la version précédente)
 const INCIDENT_TYPES = {
   DAMAGED_PACKAGE: "Colis Endommagé",
   INCORRECT_ADDRESS: "Adresse Incorrecte",
@@ -100,7 +115,6 @@ const INCIDENT_PRIORITIES = {
   CRITICAL: "Critique",
 }
 
-// Statuts corrects selon l'enum backend
 const ORDER_STATUS = {
   EN_LIVRAISON: "EN_LIVRAISON",
   LIVRE: "LIVRE",
@@ -122,6 +136,7 @@ const RunsheetDetailsScreen = () => {
   const [selectedPriority, setSelectedPriority] = useState("MEDIUM")
   const [customDescription, setCustomDescription] = useState("")
   const [incidentDescription, setIncidentDescription] = useState("")
+  const [creatingIncident, setCreatingIncident] = useState(false)
 
   // Mutations
   const [updateOrderStatus] = useMutation(UPDATE_ORDER_STATUS, {
@@ -129,10 +144,10 @@ const RunsheetDetailsScreen = () => {
   })
 
   const [createIncident] = useMutation(CREATE_INCIDENT, {
-    context: { serviceName: "order-service" }, // Utiliser le service d'incidents
+    context: { serviceName: "order-service" },
   })
 
-  // Charger les détails de la course et ses commandes
+  // Charger les détails de la course et ses commandes (code identique à la version précédente)
   useEffect(() => {
     const loadCourseDetails = async () => {
       if (!id) {
@@ -146,12 +161,9 @@ const RunsheetDetailsScreen = () => {
         setLoading(true)
         setError(null)
         console.log("Loading course details for ID:", id)
-        console.log("Order IDs param:", orderIdsParam)
-        console.log("Current user:", user)
 
         let orderIds = []
 
-        // Essayer de parser les orderIds depuis les paramètres
         if (orderIdsParam) {
           try {
             if (typeof orderIdsParam === "string") {
@@ -161,8 +173,6 @@ const RunsheetDetailsScreen = () => {
             }
           } catch (parseError) {
             console.error("Error parsing orderIds:", parseError)
-            // Si le parsing échoue, essayer de récupérer les orderIds via la course
-            console.log("Trying to fetch course details to get orderIds...")
 
             if (user?._id) {
               const courseRes = await client.query({
@@ -190,7 +200,6 @@ const RunsheetDetailsScreen = () => {
 
         console.log("Loading orders for IDs:", orderIds)
 
-        // Charger chaque commande via GraphQL
         const ordersPromises = orderIds.map(async (orderId) => {
           try {
             console.log(`Loading order: ${orderId}`)
@@ -207,15 +216,11 @@ const RunsheetDetailsScreen = () => {
               return null
             }
 
-            console.log(`Order loaded: ${orderId}`, orderRes.data.order)
-
-            // VÉRIFICATION : S'assurer que l'utilisateur peut modifier cette commande
             const order = orderRes.data.order
             if (order.driverId !== user?._id) {
-              console.warn(`User ${user?._id} is not the driver for order ${orderId} (driver: ${order.driverId})`)
+              console.warn(`User ${user?._id} is not the driver for order ${orderId}`)
             }
 
-            // Charger les informations du client
             let clientData = null
             try {
               const clientRes = await client.query({
@@ -225,7 +230,6 @@ const RunsheetDetailsScreen = () => {
                 fetchPolicy: "network-only",
               })
               clientData = clientRes.data?.getUserById
-              console.log(`Client loaded for order ${orderId}:`, clientData)
             } catch (clientError) {
               console.error(`Error loading client for order ${orderId}:`, clientError)
             }
@@ -234,11 +238,38 @@ const RunsheetDetailsScreen = () => {
             const orderAmount = Number.parseFloat(order.amount) || 0
             const totalAmount = orderAmount + deliveryFee
 
+            // Après avoir récupéré les détails de la commande et avant de retourner l'objet
+            // Vérifier s'il y a des incidents pour cette commande
+            let hasActiveIncident = false
+            try {
+              const incidentsRes = await client.query({
+                query: GET_INCIDENTS_BY_ORDER,
+                variables: { orderId },
+                context: { serviceName: "order-service" },
+                fetchPolicy: "network-only",
+              })
+
+              // Vérifier s'il y a des incidents en attente de résolution
+              const activeIncidents = incidentsRes.data?.getIncidentsByOrderId?.filter(
+                (incident) => incident.status === "EN_ATTENTE_RESOLUTION",
+              )
+
+              hasActiveIncident = activeIncidents && activeIncidents.length > 0
+            } catch (incidentError) {
+              console.error(`Error checking incidents for order ${orderId}:`, incidentError)
+            }
+
+            // Si la commande a un incident actif, ne pas l'inclure dans cette liste
+            if (hasActiveIncident) {
+              return null
+            }
+
             return {
               ...order,
               client: clientData,
               deliveryFee,
               totalAmount,
+              hasActiveIncident, // Ajouter cette propriété
             }
           } catch (orderError) {
             console.error(`Error loading order ${orderId}:`, orderError)
@@ -246,7 +277,6 @@ const RunsheetDetailsScreen = () => {
           }
         })
 
-        // Attendre que toutes les promesses se résolvent
         const ordersWithDetails = await Promise.all(ordersPromises)
         const validOrders = ordersWithDetails.filter(Boolean)
 
@@ -265,10 +295,6 @@ const RunsheetDetailsScreen = () => {
 
   const handleStatusUpdate = async (orderId, newStatus) => {
     try {
-      console.log(`Updating order ${orderId} to status ${newStatus}`)
-      console.log("Current user ID:", user?._id)
-
-      // Vérifier que l'utilisateur est bien le chauffeur de cette commande
       const order = orders.find((o) => o._id === orderId)
       if (!order) {
         Alert.alert("Erreur", "Commande introuvable")
@@ -280,7 +306,6 @@ const RunsheetDetailsScreen = () => {
         return
       }
 
-      // Vérifier que le statut est valide
       if (!Object.values(ORDER_STATUS).includes(newStatus)) {
         Alert.alert("Erreur", `Statut invalide: ${newStatus}`)
         return
@@ -293,7 +318,6 @@ const RunsheetDetailsScreen = () => {
         },
       })
 
-      // Mettre à jour l'état local
       setOrders((prevOrders) =>
         prevOrders.map((order) => (order._id === orderId ? { ...order, status: newStatus } : order)),
       )
@@ -301,24 +325,11 @@ const RunsheetDetailsScreen = () => {
       Alert.alert("Succès", "Statut mis à jour avec succès")
     } catch (error) {
       console.error("Status update error:", error)
-
-      // Gestion d'erreurs plus détaillée
-      let errorMessage = "Impossible de mettre à jour le statut"
-
-      if (error.message.includes("not authorized")) {
-        errorMessage = "Vous n'êtes pas autorisé à modifier cette commande"
-      } else if (error.message.includes("does not exist in")) {
-        errorMessage = "Statut invalide. Veuillez réessayer."
-      } else if (error.networkError) {
-        errorMessage = "Erreur de connexion. Vérifiez votre internet."
-      }
-
-      Alert.alert("Erreur", errorMessage)
+      Alert.alert("Erreur", "Impossible de mettre à jour le statut")
     }
   }
 
   const handleIncident = (order) => {
-    // Vérifier l'autorisation avant d'ouvrir le modal
     if (order.driverId !== user?._id) {
       Alert.alert("Non autorisé", "Vous ne pouvez signaler des incidents que pour vos propres commandes.")
       return
@@ -343,17 +354,22 @@ const RunsheetDetailsScreen = () => {
       return
     }
 
+    if (selectedIncidentType === "OTHER" && !customDescription.trim()) {
+      Alert.alert("Erreur", "Veuillez fournir une description personnalisée pour le type 'Autre'")
+      return
+    }
+
     try {
-      // Préparer les données selon le format attendu par le backend
+      setCreatingIncident(true)
+
       const incidentInput = {
         orderId: selectedOrder._id,
-        reportedBy: user?.name || user?.username || "Chauffeur mobile",
-        incidentType: selectedIncidentType, // Clé d'énumération (ex: "DAMAGED_PACKAGE")
+        partnerId: selectedOrder.partnerId,
+        incidentType: selectedIncidentType,
         description: incidentDescription.trim(),
-        priority: selectedPriority, // Clé d'énumération (ex: "MEDIUM")
+        priority: selectedPriority,
       }
 
-      // Ajouter la description personnalisée si le type est "OTHER"
       if (selectedIncidentType === "OTHER" && customDescription.trim()) {
         incidentInput.customDescription = customDescription.trim()
       }
@@ -368,15 +384,31 @@ const RunsheetDetailsScreen = () => {
 
       console.log("Incident created successfully:", result.data)
 
-      Alert.alert("Incident créé", "L'incident a été enregistré avec succès et sera traité par l'équipe de support.", [
-        {
-          text: "OK",
-          onPress: () => {
-            setModalVisible(false)
-            resetIncidentForm()
+      // Supprimer la commande de la liste actuelle après création de l'incident
+      setOrders((prevOrders) => prevOrders.filter((order) => order._id !== selectedOrder._id))
+
+      Alert.alert(
+        "Incident créé",
+        "L'incident a été enregistré avec succès. La commande a été déplacée vers l'onglet Incidents.",
+        [
+          {
+            text: "Voir les incidents",
+            onPress: () => {
+              setModalVisible(false)
+              resetIncidentForm()
+              // Naviguer vers l'onglet incidents
+              router.push("/(tabs)/incident")
+            },
           },
-        },
-      ])
+          {
+            text: "OK",
+            onPress: () => {
+              setModalVisible(false)
+              resetIncidentForm()
+            },
+          },
+        ],
+      )
     } catch (error) {
       console.error("Create incident error:", error)
 
@@ -386,6 +418,10 @@ const RunsheetDetailsScreen = () => {
         errorMessage = "Commande introuvable. Veuillez réessayer."
       } else if (error.message.includes("validation")) {
         errorMessage = "Données invalides. Vérifiez les informations saisies."
+      } else if (error.message.includes("Order ID is required")) {
+        errorMessage = "ID de commande requis."
+      } else if (error.message.includes("User not found")) {
+        errorMessage = "Utilisateur non trouvé. Veuillez vous reconnecter."
       } else if (error.networkError) {
         errorMessage = "Erreur de connexion. Vérifiez votre internet."
       } else if (error.graphQLErrors && error.graphQLErrors.length > 0) {
@@ -393,6 +429,8 @@ const RunsheetDetailsScreen = () => {
       }
 
       Alert.alert("Erreur", errorMessage)
+    } finally {
+      setCreatingIncident(false)
     }
   }
 
@@ -401,17 +439,21 @@ const RunsheetDetailsScreen = () => {
     setSelectedPriority("MEDIUM")
     setCustomDescription("")
     setIncidentDescription("")
+    setCreatingIncident(false)
   }
 
   const handleRetry = () => {
     setError(null)
     setLoading(true)
-    // Le useEffect se déclenchera automatiquement
   }
 
+  // Le reste du code (renderOrderItem, styles, etc.) reste identique à la version précédente
   const renderOrderItem = ({ item }) => {
-    // Vérifier si l'utilisateur peut modifier cette commande
-    const canModify = item.driverId === user?._id
+    // Remplacer la ligne existante
+    // const canModify = item.driverId === user?._id
+
+    // Par cette nouvelle logique
+    const canModify = item.driverId === user?._id && !item.hasActiveIncident
 
     return (
       <View style={styles.orderCard}>
@@ -586,21 +628,25 @@ const RunsheetDetailsScreen = () => {
         contentContainerStyle={styles.listContainer}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="document-text" size={50} color="#ccc" />
-            <Text style={styles.emptyText}>Aucune commande trouvée</Text>
-            <Text style={styles.emptySubtext}>Course ID: {id}</Text>
+            <Ionicons name="checkmark-circle" size={50} color="#4CAF50" />
+            <Text style={styles.emptyText}>Toutes les commandes sont traitées</Text>
+            <Text style={styles.emptySubtext}>
+              Les commandes avec incidents ont été déplacées vers l'onglet Incidents
+            </Text>
           </View>
         }
       />
 
-      {/* Modal pour créer un incident */}
+      {/* Modal pour créer un incident - identique à la version précédente */}
       <Modal
         animationType="slide"
         transparent={true}
         visible={modalVisible}
         onRequestClose={() => {
-          setModalVisible(false)
-          resetIncidentForm()
+          if (!creatingIncident) {
+            setModalVisible(false)
+            resetIncidentForm()
+          }
         }}
       >
         <View style={styles.modalContainer}>
@@ -609,12 +655,13 @@ const RunsheetDetailsScreen = () => {
             <Text style={styles.modalSubtitle}>Commande #{selectedOrder?._id.slice(-6)}</Text>
 
             <ScrollView style={styles.optionsContainer}>
-              <Text style={styles.sectionLabel}>Type d'incident:</Text>
+              <Text style={styles.sectionLabel}>Type d'incident: *</Text>
               {Object.entries(INCIDENT_TYPES).map(([key, label]) => (
                 <TouchableOpacity
                   key={key}
                   style={[styles.incidentOption, selectedIncidentType === key && styles.selectedOption]}
                   onPress={() => setSelectedIncidentType(key)}
+                  disabled={creatingIncident}
                 >
                   <Text style={[styles.optionText, selectedIncidentType === key && styles.selectedOptionText]}>
                     {label}
@@ -623,10 +670,9 @@ const RunsheetDetailsScreen = () => {
                 </TouchableOpacity>
               ))}
 
-              {/* Champ de description personnalisée pour "Autre" */}
               {selectedIncidentType === "OTHER" && (
                 <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>Description personnalisée:</Text>
+                  <Text style={styles.inputLabel}>Description personnalisée: *</Text>
                   <TextInput
                     style={styles.textInput}
                     value={customDescription}
@@ -634,6 +680,7 @@ const RunsheetDetailsScreen = () => {
                     placeholder="Décrivez le type d'incident..."
                     multiline
                     numberOfLines={2}
+                    editable={!creatingIncident}
                   />
                 </View>
               )}
@@ -644,6 +691,7 @@ const RunsheetDetailsScreen = () => {
                   key={key}
                   style={[styles.incidentOption, selectedPriority === key && styles.selectedOption]}
                   onPress={() => setSelectedPriority(key)}
+                  disabled={creatingIncident}
                 >
                   <Text style={[styles.optionText, selectedPriority === key && styles.selectedOptionText]}>
                     {label}
@@ -652,7 +700,6 @@ const RunsheetDetailsScreen = () => {
                 </TouchableOpacity>
               ))}
 
-              {/* Champ de description obligatoire */}
               <View style={styles.inputContainer}>
                 <Text style={styles.inputLabel}>Description détaillée: *</Text>
                 <TextInput
@@ -662,6 +709,7 @@ const RunsheetDetailsScreen = () => {
                   placeholder="Décrivez en détail ce qui s'est passé..."
                   multiline
                   numberOfLines={4}
+                  editable={!creatingIncident}
                 />
               </View>
             </ScrollView>
@@ -670,20 +718,39 @@ const RunsheetDetailsScreen = () => {
               <TouchableOpacity
                 style={[
                   styles.confirmButton,
-                  (!selectedIncidentType || !incidentDescription.trim()) && styles.disabledConfirmButton,
+                  (!selectedIncidentType ||
+                    !incidentDescription.trim() ||
+                    (selectedIncidentType === "OTHER" && !customDescription.trim()) ||
+                    creatingIncident) &&
+                    styles.disabledConfirmButton,
                 ]}
                 onPress={handleCreateIncident}
-                disabled={!selectedIncidentType || !incidentDescription.trim()}
+                disabled={
+                  !selectedIncidentType ||
+                  !incidentDescription.trim() ||
+                  (selectedIncidentType === "OTHER" && !customDescription.trim()) ||
+                  creatingIncident
+                }
               >
-                <Text style={styles.confirmButtonText}>Créer l'incident</Text>
+                {creatingIncident ? (
+                  <View style={styles.loadingButtonContent}>
+                    <ActivityIndicator size="small" color="#fff" />
+                    <Text style={styles.confirmButtonText}>Création...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.confirmButtonText}>Créer l'incident</Text>
+                )}
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.cancelButton}
+                style={[styles.cancelButton, creatingIncident && styles.disabledButton]}
                 onPress={() => {
-                  setModalVisible(false)
-                  resetIncidentForm()
+                  if (!creatingIncident) {
+                    setModalVisible(false)
+                    resetIncidentForm()
+                  }
                 }}
+                disabled={creatingIncident}
               >
                 <Text style={styles.cancelButtonText}>Annuler</Text>
               </TouchableOpacity>
@@ -695,6 +762,7 @@ const RunsheetDetailsScreen = () => {
   )
 }
 
+// Styles identiques à la version précédente
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -763,13 +831,14 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: "#999",
+    color: "#4CAF50",
     marginTop: 16,
     textAlign: "center",
+    fontWeight: "600",
   },
   emptySubtext: {
     fontSize: 12,
-    color: "#ccc",
+    color: "#666",
     marginTop: 8,
     textAlign: "center",
   },
@@ -1029,6 +1098,11 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "bold",
     fontSize: 16,
+  },
+  loadingButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   cancelButton: {
     backgroundColor: "#ccc",

@@ -18,13 +18,13 @@ const TabsLayout = () => {
           href: '/runsheet'
         }} 
       />
-      {/* <Tabs.Screen 
-        name="pickup" 
+      <Tabs.Screen 
+        name="incident" 
         options={{ 
-          title: 'PickUp',
-          href: '/pickup'
+          title: 'Incident',
+          href: '/incident'
         }} 
-      /> */}
+      />
       <Tabs.Screen 
         name="profile" 
         options={{ 

@@ -1,58 +1,83 @@
-import { View, Text, Pressable, StyleSheet } from 'react-native';
-import React, { useEffect } from 'react';
-import { icons } from '../assets/icons.js';
-import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native"
+import { AntDesign, Feather, Ionicons } from "@expo/vector-icons"
 
-const TabBarButton = (props) => {
-  const { isFocused, label, routeName, color } = props;
+const TabBarButton = ({ onPress, isFocused, routeName, color, label }) => {
+  const getIcon = () => {
+    switch (routeName) {
+      case "runsheet":
+        return <AntDesign name="bars" size={24} color={color} />
+      case "incident":
+        return <Ionicons name="warning" size={24} color={color} />
+      case "profile":
+        return <Feather name="user" size={24} color={color} />
+      default:
+        return <AntDesign name="home" size={24} color={color} />
+    }
+  }
 
-  const scale = useSharedValue(0);
-
-  useEffect(() => {
-    scale.value = withSpring(
-      typeof isFocused === 'boolean' ? (isFocused ? 1 : 0) : isFocused,
-      { duration: 350 }
-    );
-  }, [scale, isFocused]);
-
-  const animatedIconStyle = useAnimatedStyle(() => {
-    const scaleValue = interpolate(scale.value, [0, 1], [1, 1.4]);
-    const top = interpolate(scale.value, [0, 1], [0, 8]);
-
-    return {
-      transform: [{ scale: scaleValue }],
-      top
-    };
-  });
-
-  const animatedTextStyle = useAnimatedStyle(() => {
-    const opacity = interpolate(scale.value, [0, 1], [1, 0]);
-    return { opacity };
-  });
-
-  
-  const IconComponent = icons[routeName] || (() => <View />);  
+  const getLabel = () => {
+    switch (routeName) {
+      case "runsheet":
+        return "Courses"
+      case "incident":
+        return "Incidents"
+      case "profile":
+        return "Profil"
+      default:
+        return label
+    }
+  }
 
   return (
-    <Pressable {...props} style={styles.container}>
-      <Animated.View style={[animatedIconStyle]}>
-        <IconComponent color={color} />
-      </Animated.View>
-
-      <Animated.Text style={[{ color, fontSize: 11 }, animatedTextStyle]}>
-        {label}
-      </Animated.Text>
-    </Pressable>
-  );
-};
+    <TouchableOpacity onPress={onPress} style={[styles.tabbarItem, isFocused && styles.focusedTab]}>
+      <View style={styles.iconContainer}>
+        {getIcon()}
+        {routeName === "incident" && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>!</Text>
+          </View>
+        )}
+      </View>
+      <Text style={[styles.label, { color }]}>{getLabel()}</Text>
+    </TouchableOpacity>
+  )
+}
 
 const styles = StyleSheet.create({
-  container: {
+  tabbarItem: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 4
-  }
-});
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  focusedTab: {
+    backgroundColor: "rgba(254, 195, 39, 0.1)",
+    borderRadius: 15,
+  },
+  iconContainer: {
+    position: "relative",
+    marginBottom: 4,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    backgroundColor: "#F44336",
+    borderRadius: 8,
+    width: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  badgeText: {
+    color: "white",
+    fontSize: 10,
+    fontWeight: "bold",
+  },
+})
 
-export default TabBarButton;
+export default TabBarButton

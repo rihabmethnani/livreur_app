@@ -4,8 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Configuration des services
 const SERVICES = {
-  'user-service': 'http://192.168.1.105:4000/graphql',
-  'order-service':'http://192.168.1.105:3001/graphql'
+  'user-service': 'http://192.168.1.102:4000/graphql',
+  'order-service':'http://192.168.1.102:3001/graphql'
 };
 
 // Link pour router les requêtes vers le bon service
